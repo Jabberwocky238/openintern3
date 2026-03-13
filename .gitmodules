@@ -1,0 +1,12 @@
+[submodule "docs/openintern2"]
+	path = docs/openintern2
+	url = git@github.com:Jabberwocky238/openintern2.git
+[submodule "docs/opencode"]
+	path = docs/opencode
+	url = https://github.com/anomalyco/opencode.git
+[submodule "docs/nanobot"]
+	path = docs/nanobot
+	url = https://github.com/HKUDS/nanobot.git
+[submodule "docs/wecom-openclaw-plugin"]
+	path = docs/wecom-openclaw-plugin
+	url = https://github.com/WecomTeam/wecom-openclaw-plugin.git

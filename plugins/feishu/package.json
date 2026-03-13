@@ -1,0 +1,10 @@
+{
+  "name": "@openintern3/plugin-feishu",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.54.0"
+  }
+}
