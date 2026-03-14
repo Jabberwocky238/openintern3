@@ -96,9 +96,18 @@ export default class WecomPlugin extends Plugin {
       botId: process.env.WECOM_BOT_ID ?? "",
       secret: process.env.WECOM_SECRET ?? "",
       websocketUrl: process.env.WECOM_WEBSOCKET_URL ?? "wss://openws.work.weixin.qq.com",
+      requestTimeoutMs: this.parseRequestTimeout(process.env.WECOM_REQUEST_TIMEOUT_MS),
       allowFrom: parseAllowFrom(process.env.WECOM_ALLOW_FROM),
       groupAllowFrom: parseAllowFrom(process.env.WECOM_GROUP_ALLOW_FROM, false),
       mediaDir: process.env.WECOM_MEDIA_DIR ?? path.join(baseDir, "media"),
     };
+  }
+
+  private parseRequestTimeout(raw: string | undefined): number {
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value <= 0) {
+      return 60_000;
+    }
+    return Math.trunc(value);
   }
 }

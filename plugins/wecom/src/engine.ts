@@ -12,6 +12,8 @@ import type {
 
 const MESSAGE_CACHE_LIMIT = 200;
 const DEFAULT_WS_URL = "wss://openws.work.weixin.qq.com";
+export const WecomRuntimeBaseDir = path.join(process.cwd(), ".openintern3", "wecom");
+export const WecomMediaDir = path.join(WecomRuntimeBaseDir, "media");
 
 export class WecomEngine {
   private client: WSClient | null = null;
@@ -71,20 +73,22 @@ export class WecomEngine {
     this.assertRequiredConfig();
     this.log("info", "starting wecom engine", {
       websocketUrl: this.config.websocketUrl || DEFAULT_WS_URL,
+      requestTimeoutMs: this.config.requestTimeoutMs,
       botId: this.config.botId,
-      mediaDir: this.config.mediaDir,
+      mediaDir: WecomMediaDir,
       allowFrom: this.config.allowFrom,
       groupAllowFrom: this.config.groupAllowFrom,
     });
-    await mkdir(this.config.mediaDir, { recursive: true });
+    await mkdir(WecomMediaDir, { recursive: true });
     this.log("debug", "ensured media directory exists", {
-      mediaDir: this.config.mediaDir,
+      mediaDir: WecomMediaDir,
     });
 
     const client = new WSClient({
       botId: this.config.botId,
       secret: this.config.secret,
       wsUrl: this.config.websocketUrl || DEFAULT_WS_URL,
+      requestTimeout: this.config.requestTimeoutMs,
       heartbeatInterval: 30_000,
       maxReconnectAttempts: 100,
       logger: {
@@ -348,29 +352,31 @@ export class WecomEngine {
   private async downloadMedia(url: string, aesKey?: string): Promise<string> {
     if (!this.client) {
       this.log("warn", "skip media download because client is not initialized", { url });
-      return url;
+      return "";
     }
 
     try {
       this.log("info", "downloading media", { url });
       const result = await this.client.downloadFile(url, aesKey);
       const filePath = path.join(
-        this.config.mediaDir,
+        WecomMediaDir,
         await this.allocateMediaFileName(url, result.filename),
       );
       await writeFile(filePath, result.buffer);
+      const relativePath = this.toWorkspaceRelativePath(filePath);
       this.log("info", "media downloaded", {
         url,
         filePath,
+        relativePath,
         bytes: result.buffer.length,
       });
-      return filePath;
+      return relativePath;
     } catch (error) {
-      this.log("warn", "media download failed, using original url", {
+      this.log("warn", "media download failed", {
         url,
         error: error instanceof Error ? error.message : String(error),
       });
-      return url;
+      return "";
     }
   }
 
@@ -406,13 +412,17 @@ export class WecomEngine {
     for (let index = 0; index < 10_000; index += 1) {
       const candidate = index === 0 ? `${baseName}${extension}` : `${baseName}(${index})${extension}`;
       try {
-        await access(path.join(this.config.mediaDir, candidate));
+        await access(path.join(WecomMediaDir, candidate));
       } catch {
         return candidate;
       }
     }
 
     return `${baseName}_${Date.now()}${extension}`;
+  }
+
+  private toWorkspaceRelativePath(filePath: string): string {
+    return path.relative(process.cwd(), filePath).replace(/\\/g, "/");
   }
 
   private isAllowedSender(senderId: string, chatType: "single" | "group", chatId: string): boolean {

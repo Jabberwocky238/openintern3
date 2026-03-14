@@ -57,13 +57,6 @@ export interface AgentPromptRequest {
   signal?: AbortSignal;
 }
 
-export interface OpenAICompatibleProviderOptions {
-  apiKey: string;
-  apiBase: string;
-  defaultModel: string;
-  extraHeaders?: Record<string, string>;
-}
-
 export interface AgentLoopExecution {
   result: AgentRunResult;
   messages: AgentMessage[];

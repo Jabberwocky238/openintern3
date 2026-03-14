@@ -4,6 +4,7 @@ import {
   type CapabilityContext,
   type CapabilityResult,
 } from "@openintern/kernel/capability";
+import { DEFAULT_SUBAGENT_ALLOWED_CAPABILITIES } from "./capability-use.js";
 import type {
   SubagentExecutionPolicy,
   SubagentIsolationContext,
@@ -21,20 +22,6 @@ export type {
   SubagentTaskExecution,
   SubagentTaskRecord,
 } from "./types.js";
-
-export const DEFAULT_SUBAGENT_ALLOWED_CAPABILITIES = [
-  "echo.ping",
-  "cron.list",
-  "filesystem.read_file",
-  "filesystem.list_dir",
-  "filesystem.inspect_file",
-  "feishu.status",
-  "feishu.pull_messages",
-  "whatsapp.status",
-  "whatsapp.pull_messages",
-  "wecom.status",
-  "wecom.pull_messages",
-] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

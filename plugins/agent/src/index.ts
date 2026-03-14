@@ -4,7 +4,6 @@ import {
   type PluginEvent,
   Plugin,
 } from "@openintern/kernel";
-import { OpenAICompatibleProvider } from "./openai-compatible-provider.js";
 import type {
   AgentChannelMessage,
   AgentExecutionOptions,
@@ -16,14 +15,16 @@ import type {
   AgentRunRequest,
   AgentRunResult,
   AgentToolCallRequest,
-  OpenAICompatibleProviderOptions,
 } from "./types.js";
+import type { OpenAICompatibleProviderOptions } from "./providers/openai-compatible-provider-types.js";
 import { AgentSessionStore } from "./session-store.js";
+import { DEFAULT_AGENT_ALLOWED_CAPABILITIES } from "./capability-use.js";
 import {
   AgentSpawnCapabilityProvider,
   type SubagentIsolationContext,
   SubagentManager,
 } from "./subagent.js";
+import { OpenAICompatibleProvider } from "./providers/openai-compatible-provider.js";
 
 const DEFAULT_MAX_TOOL_ITERATIONS = 8;
 const SESSION_STORE_STATE_KEY = "sessionStore";
@@ -247,7 +248,7 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
       return;
     }
 
-    if (!payload.chatId.trim() || !payload.content.trim()) {
+    if (!payload.chatId.trim()) {
       return;
     }
 
@@ -258,7 +259,7 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
 
     const result = await this.runSession(
       `${route.sessionPrefix}:${payload.chatId}`,
-      payload.content,
+      this.formatChannelInput(payload),
     );
     if (!result.finalContent || !result.finalContent.trim()) {
       return;
@@ -305,9 +306,12 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
     definition: Record<string, unknown>;
   }>> {
     const descriptors = await this.registry().list();
-    const visibleDescriptors = isolation
-      ? descriptors.filter((descriptor) => isolation.allowedCapabilityIds.includes(descriptor.id))
-      : descriptors;
+    const allowedCapabilityIds = isolation
+      ? isolation.allowedCapabilityIds
+      : [...DEFAULT_AGENT_ALLOWED_CAPABILITIES];
+    const visibleDescriptors = descriptors.filter(
+      (descriptor) => allowedCapabilityIds.includes(descriptor.id),
+    );
 
     return visibleDescriptors.map((descriptor) => {
       const toolName = this.toProviderToolName(descriptor.id);
@@ -657,6 +661,23 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
       media: [...media],
       metadata: metadata as Record<string, unknown>,
     };
+  }
+
+  private formatChannelInput(payload: AgentChannelMessage): string {
+    const parts: string[] = [];
+
+    if (payload.content.trim()) {
+      parts.push(payload.content);
+    }
+
+    if (payload.media.length > 0) {
+      parts.push("Media files:");
+      for (const mediaPath of payload.media) {
+        parts.push(`- ${mediaPath}`);
+      }
+    }
+
+    return parts.join("\n").trim();
   }
 }
 

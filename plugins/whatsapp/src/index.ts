@@ -14,7 +14,7 @@ import {
   type WhatsAppInboundMessage,
 } from "./inner.js";
 
-export const WhatsAppPluginBaseDir = path.join(process.cwd(), "plugins", "whatsapp");
+
 export const WhatsAppRuntimeBaseDir = path.join(process.cwd(), ".openintern3", "whatsapp");
 
 export default class WhatsAppPlugin extends Plugin {
@@ -90,7 +90,7 @@ export default class WhatsAppPlugin extends Plugin {
     return {
       enabled: process.env.WHATSAPP_ENABLED === "true",
       authDir: process.env.WHATSAPP_AUTH_DIR ?? path.join(WhatsAppRuntimeBaseDir, "auth"),
-      mediaDir: process.env.WHATSAPP_MEDIA_DIR ?? path.join(WhatsAppPluginBaseDir, "media"),
+      mediaDir: process.env.WHATSAPP_MEDIA_DIR ?? path.join(WhatsAppRuntimeBaseDir, "media"),
     };
   }
 }

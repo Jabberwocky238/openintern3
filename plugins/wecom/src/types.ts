@@ -3,9 +3,10 @@ export interface WecomConfig {
   botId: string;
   secret: string;
   websocketUrl: string;
+  requestTimeoutMs: number;
+  mediaDir: string;
   allowFrom: string[];
   groupAllowFrom: string[];
-  mediaDir: string;
 }
 
 export interface WecomInboundMessage {
