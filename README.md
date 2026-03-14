@@ -1,166 +1,83 @@
 # openintern3
 
-`openintern3` 是一个借鉴 microkernel 思想的工作流引擎。
+English | [简体中文](./README.zh-CN.md)
 
-项目目标：
+`openintern3` is a plugin-first workflow engine inspired by microkernel design.
 
-- 把能力统一抽象为 plugin
-- 让 kernel 保持足够小，只负责挂载、初始化、信号传递与路由
-- 让 workflow 通过 plugin 组合形成，而不是写死在内核中
-- 让 agent、终端、文件系统、定时器、渠道能力都能以同一种方式接入
+The kernel stays small. Plugins own runtime state, capabilities, SDK integration, and business logic. Cross-plugin coordination happens through the event bus and the capability registry/invoker.
 
-## 核心理念
+## Current Status
 
-- 万物皆 plugin
-- kernel 不承载业务能力
-- plugin 承载状态、能力和具体实现
-- plugin 之间优先通过事件和 capability 协作
+The project is runnable and already supports:
 
-## 启动
+- Plugin lifecycle management through `Application`
+- Capability registration and invocation
+- Event bus based channel routing
+- Interactive CLI with persistent history in `.openintern3/history`
+- Agent sessions persisted in `.openintern3/agent/sessions`
+- Channel integrations for WhatsApp and WeCom
+- Optional Feishu plugin implementation in the repo
+- Web search capability
+- Terminal execution capability
+- Cron scheduling capability
+- Echo test capability
 
-根目录依赖：
+## Architecture
 
-```bash
-bun install
-```
+- `src/kernel/`: plugin lifecycle, event bus, logger, capability base types
+- `src/service/`: capability registry and invocation services
+- `src/application.ts`: mounts plugins and registers capabilities
+- `src/index.ts`: CLI entrypoint
+- `plugins/*`: isolated runtime units
 
-插件本地依赖：
+Core rules:
 
-```bash
-cd plugins/feishu && bun install
-cd ../whatsapp && bun install
-cd ../..
-```
+- Everything is a plugin
+- The kernel does not implement business features
+- Plugins expose capabilities
+- Plugins should collaborate through capabilities and events
 
-启动：
+## Default Plugins
 
-```bash
-bun run dev
-```
-
-## 当前默认加载的 plugin
+The current entrypoint loads these plugins by default:
 
 - `echo`
 - `cron`
-- `filesystem`
+- `web-search`
 - `agent`
 - `terminals`
-- `feishu`
 - `whatsapp`
+- `wecom`
 
-查看已加载插件：
+`feishu` exists in the repository, but it is not enabled in the current default `src/index.ts`.
 
-```text
-/plugin list
-```
+## Current Capabilities
 
-## 当前 capability
+Loaded by default:
 
 - `echo.ping`
 - `cron.add`
 - `cron.delete`
 - `cron.list`
-- `filesystem.read_file`
-- `filesystem.write_file`
-- `filesystem.edit_file`
-- `filesystem.list_dir`
-- `filesystem.inspect_file`
-- `feishu.start`
-- `feishu.stop`
-- `feishu.status`
-- `feishu.send_message`
-- `feishu.pull_messages`
+- `web_search.search`
+- `agent.spawn`
+- `terminals.start`
+- `terminals.list`
+- `terminals.tail`
+- `terminals.kill`
+- `terminals.exec`
 - `whatsapp.start`
 - `whatsapp.stop`
 - `whatsapp.status`
 - `whatsapp.send_message`
 - `whatsapp.pull_messages`
+- `wecom.start`
+- `wecom.stop`
+- `wecom.status`
+- `wecom.send_message`
+- `wecom.pull_messages`
 
-## 快速验证
-
-触发 `cron -> echo`：
-
-```text
-/plugin cron addCron echo 500
-```
-
-预期结果：
-
-- 返回一个 cron id
-- `echo` 插件持续打印来自 `cron` 的时间戳 payload
-
-## Agent 当前状态
-
-测试命令：
-
-```text
-/plugin agent runPrompt 你好
-```
-
-当前进展：
-
-- `agent` 已提供最小 `AgentRunner` 协议
-- 已支持 capability tools 组装、tool call 解析与执行
-- session 在 plugin 内管理并落盘
-- 当前已接入 `whatsapp -> agent -> whatsapp` 自动回复链路
-
-## Filesystem
-
-`filesystem` 已 capability 化，核心实现放在 `plugins/filesystem/src/inner.ts`。
-
-调试示例：
-
-```text
-/plugin filesystem inspect .
-/plugin filesystem list .
-```
-
-## WhatsApp
-
-环境变量最小配置：
-
-```env
-WHATSAPP_ENABLED=true
-WHATSAPP_AGENT_ENABLED=true
-```
-
-可选环境变量：
-
-```env
-WHATSAPP_AUTH_DIR=.openintern3/whatsapp/auth
-WHATSAPP_MEDIA_DIR=.openintern3/whatsapp/media
-```
-
-启动：
-
-```text
-/plugin whatsapp start
-/plugin wecom start
-```
-
-首次登录时会：
-
-- 在终端打印 QR 字符画
-- 将二维码 PNG 保存到 `.openintern3/whatsapp/qr/latest.png`
-
-调试命令：
-
-```text
-/plugin whatsapp status
-/plugin whatsapp pullMessages
-```
-
-当 `WHATSAPP_AGENT_ENABLED=true` 时，收到 WhatsApp 消息后会自动：
-
-1. 调 `agent.runSession("whatsapp:<chatId>", message)`
-2. 生成回复
-3. 回发到原 WhatsApp 会话
-
-## Feishu
-
-当前 `feishu` 已完成 plugin 化，不再依赖 `openintern2` 的 `MessageBus`。
-
-当前能力：
+Implemented in the repo but not loaded by default:
 
 - `feishu.start`
 - `feishu.stop`
@@ -168,9 +85,108 @@ WHATSAPP_MEDIA_DIR=.openintern3/whatsapp/media
 - `feishu.send_message`
 - `feishu.pull_messages`
 
-当前入站消息会通过内核 `EventBus` 发出 `message.received`。
+## Features By Plugin
 
-## 类型检查
+### Agent
+
+- Receives channel messages from the `channel` namespace
+- Runs multi-step tool/capability loops
+- Persists session history on disk
+- Supports provider-side tool calling
+- Streams user-visible progress messages back to CLI and channels
+- Supports subagent spawning through `agent.spawn`
+
+### Terminals
+
+- Starts background shell processes
+- Executes one-shot commands
+- Stores terminal output under `.openintern3/terminals/output`
+- Lists, tails, and kills managed processes
+
+### Web Search
+
+- Exposes a web search capability for the agent
+
+### WhatsApp
+
+- QR login flow
+- Auth state under `.openintern3/whatsapp/auth`
+- Media saved under `.openintern3/whatsapp/media`
+- Inbound messages forwarded to the agent through the event bus
+
+### WeCom
+
+- WebSocket based bot connection
+- Media saved under `.openintern3/wecom/media`
+- Inbound messages forwarded to the agent through the event bus
+
+### Feishu
+
+- Plugin implementation is present
+- Start/stop/status/send/pull capabilities are implemented
+- Not enabled in the current default entrypoint
+
+## Run
+
+Install root dependencies:
+
+```bash
+bun install
+```
+
+Start the CLI:
+
+```bash
+bun run dev
+```
+
+You can also use:
+
+```bash
+bun run start
+```
+
+## CLI
+
+Useful commands:
+
+```text
+/help
+/plugin list
+/plugin get agent
+/plugin wecom start
+/plugin whatsapp start
+/plugin terminals exec "uname -a"
+```
+
+CLI history is appended to:
+
+```text
+.openintern3/history
+```
+
+## Environment
+
+Common agent/provider variables:
+
+```env
+AGENT_PROVIDER_API_KEY=...
+AGENT_PROVIDER_API_BASE=...
+AGENT_PROVIDER_DEFAULT_MODEL=...
+```
+
+Example channel variables:
+
+```env
+WHATSAPP_ENABLED=true
+WECOM_ENABLED=true
+WECOM_BOT_ID=...
+WECOM_SECRET=...
+```
+
+See plugin source files for the full set of optional environment variables.
+
+## Type Check
 
 ```bash
 ./node_modules/.bin/tsc --noEmit
