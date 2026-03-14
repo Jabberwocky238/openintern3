@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { access, mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import * as Lark from "@larksuiteoapi/node-sdk";
 
 const TOKEN_REFRESH_SKEW_MS = 60_000;
@@ -11,6 +13,7 @@ export interface FeishuConfig {
   verificationToken: string;
   encryptKey: string;
   allowFrom: string[];
+  mediaDir: string;
 }
 
 export interface FeishuInnerOptions {
@@ -80,12 +83,14 @@ export class FeishuInner {
     started: boolean;
     queueSize: number;
     allowFrom: string[];
+    mediaDir: string;
   } {
     return {
       enabled: this.config.enabled,
       started: this.wsClient !== null,
       queueSize: this.inboundQueue.length,
       allowFrom: [...this.config.allowFrom],
+      mediaDir: this.config.mediaDir,
     };
   }
 
@@ -196,7 +201,11 @@ export class FeishuInner {
     }
 
     const msgType = message?.message_type ?? "unknown";
-    const parsed = this.parseIncomingContent(msgType, message?.content ?? "");
+    const parsed = await this.parseIncomingContent(
+      messageId,
+      msgType,
+      message?.content ?? "",
+    );
     if (!parsed.content.trim()) {
       return;
     }
@@ -248,9 +257,10 @@ export class FeishuInner {
   }
 
   private parseIncomingContent(
+    messageId: string,
     msgType: string,
     rawContent: string,
-  ): { content: string; media: string[] } {
+  ): Promise<{ content: string; media: string[] }> {
     let contentJson: Record<string, unknown> = {};
 
     try {
@@ -260,20 +270,20 @@ export class FeishuInner {
     }
 
     if (msgType === "text") {
-      return {
+      return Promise.resolve({
         content: typeof contentJson.text === "string" ? contentJson.text : "",
         media: [],
-      };
+      });
     }
 
     if (msgType === "post") {
-      return {
+      return Promise.resolve({
         content: this.extractPostText(contentJson) || "[post]",
         media: [],
-      };
+      });
     }
 
-    return { content: `[${msgType}]`, media: [] };
+    return this.parseMediaContent(messageId, msgType, contentJson);
   }
 
   private extractPostText(contentJson: Record<string, unknown>): string {
@@ -370,5 +380,161 @@ export class FeishuInner {
     return typeof value === "object" && value !== null && !Array.isArray(value)
       ? (value as Record<string, unknown>)
       : {};
+  }
+
+  private async parseMediaContent(
+    messageId: string,
+    msgType: string,
+    contentJson: Record<string, unknown>,
+  ): Promise<{ content: string; media: string[] }> {
+    const resourceKey = this.extractResourceKey(msgType, contentJson);
+
+    if (!resourceKey) {
+      return { content: `[${msgType}]`, media: [] };
+    }
+
+    const mediaPath = await this.downloadMessageResource(messageId, resourceKey, msgType);
+    return {
+      content: `[${msgType}]`,
+      media: mediaPath ? [mediaPath] : [],
+    };
+  }
+
+  private extractResourceKey(
+    msgType: string,
+    contentJson: Record<string, unknown>,
+  ): string | null {
+    if (msgType === "image" && typeof contentJson.image_key === "string") {
+      return contentJson.image_key;
+    }
+
+    if (
+      (msgType === "file" || msgType === "audio" || msgType === "media" || msgType === "video")
+      && typeof contentJson.file_key === "string"
+    ) {
+      return contentJson.file_key;
+    }
+
+    return null;
+  }
+
+  private async downloadMessageResource(
+    messageId: string,
+    resourceKey: string,
+    resourceType: string,
+  ): Promise<string | null> {
+    try {
+      await mkdir(this.config.mediaDir, { recursive: true });
+
+      const token = await this.getTenantAccessToken();
+      const response = await fetch(
+        `https://open.feishu.cn/open-apis/im/v1/messages/${encodeURIComponent(messageId)}/resources/${encodeURIComponent(resourceKey)}?type=${encodeURIComponent(resourceType)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      const fileName = await this.allocateMediaFileName(
+        this.extractFileNameFromHeaders(response.headers.get("content-disposition")),
+        resourceKey,
+        response.headers.get("content-type") ?? undefined,
+      );
+      const filePath = path.join(this.config.mediaDir, fileName);
+      await writeFile(filePath, buffer);
+      return filePath;
+    } catch {
+      return null;
+    }
+  }
+
+  private extractFileNameFromHeaders(contentDisposition: string | null): string | undefined {
+    if (!contentDisposition) {
+      return undefined;
+    }
+
+    const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+    if (utf8Match) {
+      return decodeURIComponent(utf8Match[1]);
+    }
+
+    const simpleMatch = contentDisposition.match(/filename="?([^"]+)"?/i);
+    return simpleMatch?.[1];
+  }
+
+  private async allocateMediaFileName(
+    originalFileName: string | undefined,
+    fallbackKey: string,
+    contentType?: string,
+  ): Promise<string> {
+    const desiredName = this.normalizeMediaFileName(originalFileName, fallbackKey, contentType);
+    return this.ensureUniqueMediaFileName(desiredName);
+  }
+
+  private normalizeMediaFileName(
+    originalFileName: string | undefined,
+    fallbackKey: string,
+    contentType?: string,
+  ): string {
+    if (originalFileName && originalFileName.trim()) {
+      return this.sanitizeFileName(originalFileName);
+    }
+
+    const extension = this.extensionFromContentType(contentType);
+    return this.sanitizeFileName(`${fallbackKey}${extension}`);
+  }
+
+  private extensionFromContentType(contentType?: string): string {
+    if (!contentType) {
+      return "";
+    }
+
+    const normalized = contentType.split(";")[0].trim().toLowerCase();
+    const directMap: Record<string, string> = {
+      "image/jpeg": ".jpg",
+      "image/png": ".png",
+      "image/gif": ".gif",
+      "video/mp4": ".mp4",
+      "audio/mpeg": ".mp3",
+      "audio/mp4": ".m4a",
+      "application/pdf": ".pdf",
+    };
+
+    if (directMap[normalized]) {
+      return directMap[normalized];
+    }
+
+    const subtype = normalized.split("/")[1];
+    return subtype ? `.${subtype}` : "";
+  }
+
+  private sanitizeFileName(fileName: string): string {
+    const trimmed = path.basename(fileName.trim());
+    const sanitized = trimmed.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_");
+    return sanitized || "media.bin";
+  }
+
+  private async ensureUniqueMediaFileName(fileName: string): Promise<string> {
+    const parsed = path.parse(fileName);
+    const baseName = parsed.name || "media";
+    const extension = parsed.ext;
+
+    for (let index = 0; index < 10_000; index += 1) {
+      const candidate = index === 0 ? `${baseName}${extension}` : `${baseName}(${index})${extension}`;
+      try {
+        await access(path.join(this.config.mediaDir, candidate));
+      } catch {
+        return candidate;
+      }
+    }
+
+    return `${baseName}_${Date.now()}${extension}`;
   }
 }

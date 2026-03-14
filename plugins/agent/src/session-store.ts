@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import type { AgentMessage } from "./provider.js";
+import type { AgentMessage } from "./types.js";
 
 export class AgentSession {
   public readonly key: string;
@@ -88,7 +88,7 @@ export class AgentSessionStore {
   private readonly initPromise: Promise<void>;
 
   constructor(private readonly workspace: string) {
-    this.sessionsDir = path.join(workspace, ".sessions", "agent");
+    this.sessionsDir = path.join(workspace, ".openintern3", "agent", "sessions");
     this.initPromise = mkdir(this.sessionsDir, { recursive: true }).then(() => undefined);
   }
 

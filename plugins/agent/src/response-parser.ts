@@ -1,4 +1,4 @@
-import type { AgentMessage, AgentToolCallRequest } from "./provider.js";
+import type { AgentMessage, AgentToolCallRequest } from "./types.js";
 
 export function summarizeResponseBody(body: string): string {
   const singleLine = body.replace(/\s+/g, " ").trim();

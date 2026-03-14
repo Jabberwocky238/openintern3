@@ -4,15 +4,20 @@ import {
   type PluginEvent,
   Plugin,
 } from "@openintern/kernel";
-import { buildPromptMessages, type AgentRunner, type AgentPromptRequest } from "./agent-runner.js";
-import { OpenAICompatibleProvider, type OpenAICompatibleProviderOptions } from "./openai-compatible-provider.js";
+import { OpenAICompatibleProvider } from "./openai-compatible-provider.js";
 import type {
+  AgentChannelMessage,
+  AgentExecutionOptions,
+  AgentLoopExecution,
   AgentMessage,
+  AgentPromptRequest,
   AgentProvider,
+  AgentRunner,
   AgentRunRequest,
   AgentRunResult,
   AgentToolCallRequest,
-} from "./provider.js";
+  OpenAICompatibleProviderOptions,
+} from "./types.js";
 import { AgentSessionStore } from "./session-store.js";
 import {
   AgentSpawnCapabilityProvider,
@@ -20,24 +25,9 @@ import {
   SubagentManager,
 } from "./subagent.js";
 
-const ENV_AGENT_API_KEY = "AGENT_PROVIDER_API_KEY";
-const ENV_AGENT_API_BASE = "AGENT_PROVIDER_API_BASE";
-const ENV_AGENT_DEFAULT_MODEL = "AGENT_PROVIDER_DEFAULT_MODEL";
-const ENV_AGENT_EXTRA_HEADERS = "AGENT_PROVIDER_EXTRA_HEADERS";
-const ENV_WHATSAPP_AGENT_ENABLED = "WHATSAPP_AGENT_ENABLED";
 const DEFAULT_MAX_TOOL_ITERATIONS = 8;
 const SESSION_STORE_STATE_KEY = "sessionStore";
 const SUBAGENT_MANAGER_STATE_KEY = "subagentManager";
-
-interface AgentLoopExecution {
-  result: AgentRunResult;
-  messages: AgentMessage[];
-}
-
-interface AgentExecutionOptions {
-  sessionId?: string;
-  isolation?: SubagentIsolationContext;
-}
 
 export default class AgentPlugin extends Plugin implements AgentRunner {
   private provider?: AgentProvider;
@@ -252,29 +242,30 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
   }
 
   public async onChannelMessage(event: PluginEvent): Promise<void> {
-    const payload =
-      typeof event.payload === "object" && event.payload !== null
-        ? (event.payload as Record<string, unknown>)
-        : {};
-    const channel = typeof payload.channel === "string" ? payload.channel : "";
-    const chatId = typeof payload.chatId === "string" ? payload.chatId : "";
-    const content = typeof payload.content === "string" ? payload.content : "";
-
-    if (channel !== "whatsapp" || !this.whatsAppAgentEnabled()) {
+    const payload = this.toChannelMessage(event.payload);
+    if (!payload) {
       return;
     }
 
-    if (!chatId.trim() || !content.trim()) {
+    if (!payload.chatId.trim() || !payload.content.trim()) {
       return;
     }
 
-    const result = await this.runSession(`whatsapp:${chatId}`, content);
+    const route = this.resolveChannelRoute(payload.channel);
+    if (!route) {
+      return;
+    }
+
+    const result = await this.runSession(
+      `${route.sessionPrefix}:${payload.chatId}`,
+      payload.content,
+    );
     if (!result.finalContent || !result.finalContent.trim()) {
       return;
     }
 
-    await this.invokeCapability("whatsapp.send_message", {
-      to: chatId,
+    await this.invokeCapability(route.replyCapabilityId, {
+      to: payload.chatId,
       text: result.finalContent,
     });
   }
@@ -530,21 +521,21 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
   }
 
   private getProviderOptions(): OpenAICompatibleProviderOptions {
-    const apiKey = process.env[ENV_AGENT_API_KEY];
-    const apiBase = process.env[ENV_AGENT_API_BASE];
-    const defaultModel = process.env[ENV_AGENT_DEFAULT_MODEL];
-    const rawExtraHeaders = process.env[ENV_AGENT_EXTRA_HEADERS];
+    const apiKey = process.env.AGENT_PROVIDER_API_KEY;
+    const apiBase = process.env.AGENT_PROVIDER_API_BASE;
+    const defaultModel = process.env.AGENT_PROVIDER_DEFAULT_MODEL;
+    const rawExtraHeaders = process.env.AGENT_PROVIDER_EXTRA_HEADERS;
 
     if (!apiKey || apiKey.trim().length === 0) {
-      throw new Error(`Missing environment variable: ${ENV_AGENT_API_KEY}`);
+      throw new Error(`Missing environment variable: AGENT_PROVIDER_API_KEY`);
     }
 
     if (!apiBase || apiBase.trim().length === 0) {
-      throw new Error(`Missing environment variable: ${ENV_AGENT_API_BASE}`);
+      throw new Error(`Missing environment variable: AGENT_PROVIDER_API_BASE`);
     }
 
     if (!defaultModel || defaultModel.trim().length === 0) {
-      throw new Error(`Missing environment variable: ${ENV_AGENT_DEFAULT_MODEL}`);
+      throw new Error(`Missing environment variable: AGENT_PROVIDER_DEFAULT_MODEL`);
     }
 
     return {
@@ -568,13 +559,13 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
       parsed = JSON.parse(rawExtraHeaders);
     } catch {
       throw new TypeError(
-        `${ENV_AGENT_EXTRA_HEADERS} must be a valid JSON object string.`,
+        `AGENT_PROVIDER_EXTRA_HEADERS must be a valid JSON object string.`,
       );
     }
 
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       throw new TypeError(
-        `${ENV_AGENT_EXTRA_HEADERS} must be a JSON object string.`,
+        `AGENT_PROVIDER_EXTRA_HEADERS must be a valid JSON object string.`,
       );
     }
 
@@ -583,7 +574,7 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
     for (const [key, value] of Object.entries(parsed)) {
       if (typeof value !== "string") {
         throw new TypeError(
-          `${ENV_AGENT_EXTRA_HEADERS} values must all be strings.`,
+          `AGENT_PROVIDER_EXTRA_HEADERS values must all be strings.`,
         );
       }
 
@@ -594,6 +585,95 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
   }
 
   private whatsAppAgentEnabled(): boolean {
-    return process.env[ENV_WHATSAPP_AGENT_ENABLED] === "true";
+    return process.env.WHATSAPP_AGENT_ENABLED === "true";
   }
+
+  private wecomAgentEnabled(): boolean {
+    return process.env.WECOM_AGENT_ENABLED === "true";
+  }
+
+  private resolveChannelRoute(
+    channel: string,
+  ): { sessionPrefix: string; replyCapabilityId: string } | null {
+    if (channel === "whatsapp" && this.whatsAppAgentEnabled()) {
+      return {
+        sessionPrefix: "whatsapp",
+        replyCapabilityId: "whatsapp.send_message",
+      };
+    }
+
+    if (channel === "wecom" && this.wecomAgentEnabled()) {
+      return {
+        sessionPrefix: "wecom",
+        replyCapabilityId: "wecom.send_message",
+      };
+    }
+
+    return null;
+  }
+
+  private toChannelMessage(payload: unknown): AgentChannelMessage | null {
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+      return null;
+    }
+
+    const record = payload as Record<string, unknown>;
+    const channel = record.channel;
+    const senderId = record.senderId;
+    const chatId = record.chatId;
+    const content = record.content;
+    const timestamp = record.timestamp;
+    const media = record.media;
+    const metadata = record.metadata;
+
+    if (
+      channel !== "feishu" &&
+      channel !== "whatsapp" &&
+      channel !== "wecom"
+    ) {
+      return null;
+    }
+
+    if (
+      typeof senderId !== "string" ||
+      typeof chatId !== "string" ||
+      typeof content !== "string" ||
+      typeof timestamp !== "string" ||
+      !Array.isArray(media) ||
+      media.some((item) => typeof item !== "string") ||
+      typeof metadata !== "object" ||
+      metadata === null ||
+      Array.isArray(metadata)
+    ) {
+      return null;
+    }
+
+    return {
+      channel,
+      senderId,
+      chatId,
+      content,
+      timestamp,
+      media: [...media],
+      metadata: metadata as Record<string, unknown>,
+    };
+  }
+}
+
+export function buildPromptMessages(request: AgentPromptRequest): AgentMessage[] {
+  const messages: AgentMessage[] = [];
+
+  if (request.systemPrompt && request.systemPrompt.trim().length > 0) {
+    messages.push({
+      role: "system",
+      content: request.systemPrompt,
+    });
+  }
+
+  messages.push({
+    role: "user",
+    content: request.prompt,
+  });
+
+  return messages;
 }

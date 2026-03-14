@@ -1,5 +1,5 @@
 import { randomBytes, webcrypto } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import makeWASocket, {
   DisconnectReason,
@@ -11,6 +11,7 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import pino from "pino";
 import QRCode from "qrcode";
+import type { Logger } from "@openintern/kernel";
 
 const MESSAGE_CACHE_LIMIT = 200;
 
@@ -32,6 +33,7 @@ export interface WhatsAppInboundMessage {
 
 export interface WhatsAppInnerOptions {
   onMessage?: (message: WhatsAppInboundMessage) => void | Promise<void>;
+  logger?: Logger;
 }
 
 export class WhatsAppInner {
@@ -258,14 +260,7 @@ export class WhatsAppInner {
       await mkdir(this.config.mediaDir, { recursive: true });
       const buffer = await downloadMediaMessage(rawMessage as any, "buffer", {});
 
-      let outputName: string;
-      if (fileName) {
-        outputName = `wa_${Date.now()}_${randomBytes(4).toString("hex")}_${fileName}`;
-      } else {
-        const mime = mimeType || "application/octet-stream";
-        const ext = `.${mime.split("/").pop()?.split(";")[0] || "bin"}`;
-        outputName = `wa_${Date.now()}_${randomBytes(4).toString("hex")}${ext}`;
-      }
+      const outputName = await this.allocateMediaFileName(fileName, mimeType);
 
       const filePath = path.join(this.config.mediaDir, outputName);
       await writeFile(filePath, buffer);
@@ -297,6 +292,47 @@ export class WhatsAppInner {
     return null;
   }
 
+  private async allocateMediaFileName(
+    originalFileName?: string,
+    mimeType?: string,
+  ): Promise<string> {
+    const desiredName = this.normalizeMediaFileName(originalFileName, mimeType);
+    return this.ensureUniqueMediaFileName(desiredName);
+  }
+
+  private normalizeMediaFileName(originalFileName?: string, mimeType?: string): string {
+    if (originalFileName && originalFileName.trim()) {
+      return this.sanitizeFileName(originalFileName);
+    }
+
+    const mime = mimeType || "application/octet-stream";
+    const ext = `.${mime.split("/").pop()?.split(";")[0] || "bin"}`;
+    return this.sanitizeFileName(`media${ext}`);
+  }
+
+  private sanitizeFileName(fileName: string): string {
+    const trimmed = path.basename(fileName.trim());
+    const sanitized = trimmed.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_");
+    return sanitized || `media_${randomBytes(4).toString("hex")}.bin`;
+  }
+
+  private async ensureUniqueMediaFileName(fileName: string): Promise<string> {
+    const parsed = path.parse(fileName);
+    const baseName = parsed.name || "media";
+    const extension = parsed.ext;
+
+    for (let index = 0; index < 10_000; index += 1) {
+      const candidate = index === 0 ? `${baseName}${extension}` : `${baseName}(${index})${extension}`;
+      try {
+        await access(path.join(this.config.mediaDir, candidate));
+      } catch {
+        return candidate;
+      }
+    }
+
+    return `${baseName}_${Date.now()}${extension}`;
+  }
+
   private asObject(value: unknown): Record<string, any> {
     return typeof value === "object" && value !== null && !Array.isArray(value)
       ? (value as Record<string, any>)
@@ -318,9 +354,9 @@ export class WhatsAppInner {
     });
     this.qrPath = qrPath;
     this.qrUpdatedAt = new Date().toISOString();
-    console.log("\n[whatsapp] Scan this QR code with WhatsApp Linked Devices:\n");
-    console.log(terminalQr);
-    console.log(`[whatsapp] QR code image saved: ${qrPath}`);
+    this.options.logger?.info("scan this QR code with WhatsApp Linked Devices");
+    this.options.logger?.info(`\n${terminalQr}`);
+    this.options.logger?.info(`QR code image saved: ${qrPath}`);
   }
 
   private async clearQrCode(): Promise<void> {
@@ -337,4 +373,3 @@ export class WhatsAppInner {
   }
 
 }
-

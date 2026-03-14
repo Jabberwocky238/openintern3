@@ -2,20 +2,14 @@ import type {
   AgentProvider,
   AgentRunRequest,
   AgentRunResult,
-} from "./provider.js";
+  OpenAICompatibleProviderOptions,
+} from "./types.js";
 import {
   parseSsePayload,
   parseToolCalls,
   sanitizeMessages,
   summarizeResponseBody,
 } from "./response-parser.js";
-
-export interface OpenAICompatibleProviderOptions {
-  apiKey: string;
-  apiBase: string;
-  defaultModel: string;
-  extraHeaders?: Record<string, string>;
-}
 
 export class OpenAICompatibleProvider implements AgentProvider {
   private readonly apiKey: string;

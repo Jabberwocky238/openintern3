@@ -135,6 +135,7 @@ WHATSAPP_MEDIA_DIR=.openintern3/whatsapp/media
 
 ```text
 /plugin whatsapp start
+/plugin wecom start
 ```
 
 首次登录时会：

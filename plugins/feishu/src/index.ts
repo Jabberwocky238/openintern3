@@ -1,4 +1,6 @@
+import path from "node:path";
 import { CapabilityProvider, Plugin } from "@openintern/kernel";
+import type { AgentChannelMessage } from "../../agent/src/types.js";
 import {
   FeishuPullMessagesCapabilityProvider,
   FeishuSendMessageCapabilityProvider,
@@ -29,7 +31,7 @@ export default class FeishuPlugin extends Plugin {
     this.state.inner = new FeishuInner(
       this.configFromEnv(),
       async (message: FeishuInboundMessage) => {
-        this.eventBus?.emit(this, "message.received", {
+        const payload: AgentChannelMessage = {
           channel: "feishu",
           senderId: message.senderId,
           chatId: message.chatId,
@@ -37,7 +39,9 @@ export default class FeishuPlugin extends Plugin {
           timestamp: message.timestamp,
           media: message.media,
           metadata: message.metadata,
-        });
+        };
+
+        this.eventBus?.emit(this, "message.received", payload);
       },
     );
   }
@@ -88,6 +92,7 @@ export default class FeishuPlugin extends Plugin {
       verificationToken: process.env.FEISHU_VERIFICATION_TOKEN ?? "",
       encryptKey: process.env.FEISHU_ENCRYPT_KEY ?? "",
       allowFrom: parseAllowFrom(process.env.FEISHU_ALLOW_FROM),
+      mediaDir: process.env.FEISHU_MEDIA_DIR ?? path.join(process.cwd(), "plugins", "feishu", "media"),
     };
   }
 }

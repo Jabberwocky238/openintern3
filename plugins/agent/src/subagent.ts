@@ -4,7 +4,23 @@ import {
   type CapabilityContext,
   type CapabilityResult,
 } from "@openintern/kernel/capability";
-import type { AgentSessionStore } from "./session-store.js";
+import type {
+  SubagentExecutionPolicy,
+  SubagentIsolationContext,
+  SubagentPluginLike,
+  SubagentSpawnRequest,
+  SubagentTaskExecution,
+  SubagentTaskRecord,
+} from "./types.js";
+
+export type {
+  SubagentExecutionPolicy,
+  SubagentIsolationContext,
+  SubagentPluginLike,
+  SubagentSpawnRequest,
+  SubagentTaskExecution,
+  SubagentTaskRecord,
+} from "./types.js";
 
 export const DEFAULT_SUBAGENT_ALLOWED_CAPABILITIES = [
   "echo.ping",
@@ -16,59 +32,9 @@ export const DEFAULT_SUBAGENT_ALLOWED_CAPABILITIES = [
   "feishu.pull_messages",
   "whatsapp.status",
   "whatsapp.pull_messages",
+  "wecom.status",
+  "wecom.pull_messages",
 ] as const;
-
-export interface SubagentSpawnRequest {
-  task: string;
-  sessionId?: string;
-  role?: string;
-  callbackSummary?: boolean;
-}
-
-export interface SubagentTaskRecord {
-  id: string;
-  parentSessionId: string;
-  sessionId: string;
-  task: string;
-  role?: string;
-  status: "queued" | "running" | "completed" | "failed";
-  createdAt: string;
-  startedAt?: string;
-  finishedAt?: string;
-  result?: string | null;
-  error?: string;
-}
-
-export interface SubagentTaskExecution {
-  finalContent: string | null;
-}
-
-export interface SubagentExecutionPolicy {
-  allowedCapabilityIds: string[];
-  maxDepth: number;
-}
-
-export interface SubagentIsolationContext {
-  actorType: "subagent";
-  depth: number;
-  parentSessionId: string;
-  sessionId: string;
-  taskId: string;
-  allowedCapabilityIds: string[];
-}
-
-export interface SubagentPluginLike {
-  readonly name: string;
-  readonly version: string;
-  readonly isInitialized: boolean;
-  runSubagentSession(
-    sessionId: string,
-    task: string,
-    isolation: SubagentIsolationContext,
-    role?: string,
-  ): Promise<SubagentTaskExecution>;
-  getSessionStoreForSubagent(): AgentSessionStore;
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

@@ -28,7 +28,7 @@ export default class EchoPlugin extends Plugin {
   }
 
   public ping(args: unknown[]): string {
-    console.log(args);
+    this.logger().info("echo ping", args);
     return "pong";
   }
 

@@ -1,6 +1,7 @@
 import type { Plugin } from "@openintern/kernel/plugin";
 import { CliEngine } from "./CliEngine.js";
 import { EventBus } from "./kernel/event-bus.js";
+import { ConsoleLogger } from "./kernel/logger.js";
 import {
   InMemoryCapabilityInvokerService,
   InMemoryCapabilityRegistryService,
@@ -12,6 +13,7 @@ export class Application {
   public readonly capabilityInvoker = new InMemoryCapabilityInvokerService(
     this.capabilityRegistry,
   );
+  public readonly logger = new ConsoleLogger();
 
   private readonly cliEngine = new CliEngine();
   private readonly eventBus = new EventBus();
@@ -21,6 +23,7 @@ export class Application {
     await plugin._initPlugin(this.eventBus, {
       capabilityRegistry: this.capabilityRegistry,
       capabilityInvoker: this.capabilityInvoker,
+      logger: this.logger,
     });
     this.registerPluginCapabilities(plugin);
   }

@@ -1,5 +1,6 @@
 import path from "node:path";
 import { CapabilityProvider, Plugin } from "@openintern/kernel";
+import type { AgentChannelMessage } from "../../agent/src/types.js";
 import {
   WhatsAppPullMessagesCapabilityProvider,
   WhatsAppSendMessageCapabilityProvider,
@@ -13,6 +14,9 @@ import {
   type WhatsAppInboundMessage,
 } from "./inner.js";
 
+export const WhatsAppPluginBaseDir = path.join(process.cwd(), "plugins", "whatsapp");
+export const WhatsAppRuntimeBaseDir = path.join(process.cwd(), ".openintern3", "whatsapp");
+
 export default class WhatsAppPlugin extends Plugin {
   constructor() {
     super({
@@ -24,19 +28,22 @@ export default class WhatsAppPlugin extends Plugin {
 
   public override async init(): Promise<void> {
     this.state.inner = new WhatsAppInner(this.configFromEnv(), {
+      logger: this.logger(),
       onMessage: async (message: WhatsAppInboundMessage) => {
-        this.eventBus?.emit(this, "message.received", {
+        const payload: AgentChannelMessage = {
           channel: "whatsapp",
           senderId: message.sender,
           chatId: message.sender,
           content: message.content,
-          timestamp: message.timestamp,
+          timestamp: new Date(message.timestamp * 1000).toISOString(),
           media: message.media,
           metadata: {
             pn: message.pn,
             isGroup: message.isGroup,
           },
-        });
+        };
+
+        this.eventBus?.emit(this, "message.received", payload);
       },
     });
   }
@@ -80,11 +87,10 @@ export default class WhatsAppPlugin extends Plugin {
   }
 
   private configFromEnv(): WhatsAppConfig {
-    const baseDir = path.join(process.cwd(), ".openintern3", "whatsapp");
     return {
       enabled: process.env.WHATSAPP_ENABLED === "true",
-      authDir: process.env.WHATSAPP_AUTH_DIR ?? path.join(baseDir, "auth"),
-      mediaDir: process.env.WHATSAPP_MEDIA_DIR ?? path.join(baseDir, "media"),
+      authDir: process.env.WHATSAPP_AUTH_DIR ?? path.join(WhatsAppRuntimeBaseDir, "auth"),
+      mediaDir: process.env.WHATSAPP_MEDIA_DIR ?? path.join(WhatsAppPluginBaseDir, "media"),
     };
   }
 }

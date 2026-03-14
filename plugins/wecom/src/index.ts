@@ -1,5 +1,6 @@
 import path from "node:path";
 import { CapabilityProvider, Plugin } from "@openintern/kernel";
+import type { AgentChannelMessage } from "../../agent/src/types.js";
 import {
   WecomPullMessagesCapabilityProvider,
   WecomSendMessageCapabilityProvider,
@@ -7,7 +8,7 @@ import {
   WecomStatusCapabilityProvider,
   WecomStopCapabilityProvider,
 } from "./capabilities.js";
-import { WecomEngine } from "./inner.js";
+import { WecomEngine } from "./engine.js";
 import type { WecomConfig, WecomInboundMessage } from "./types.js";
 
 function parseAllowFrom(raw: string | undefined, fallbackToAll = true): string[] {
@@ -31,7 +32,7 @@ export default class WecomPlugin extends Plugin {
     this.state.inner = new WecomEngine(
       this.configFromEnv(),
       async (message: WecomInboundMessage) => {
-        this.eventBus?.emit(this, "message.received", {
+        const payload: AgentChannelMessage = {
           channel: "wecom",
           senderId: message.senderId,
           chatId: message.chatId,
@@ -43,8 +44,10 @@ export default class WecomPlugin extends Plugin {
             event: message.event,
             raw: message.metadata,
           },
-        });
+        };
+        this.eventBus?.emit<AgentChannelMessage>(this, "message.received", payload);
       },
+      this.logger(),
     );
   }
 
@@ -87,7 +90,7 @@ export default class WecomPlugin extends Plugin {
   }
 
   private configFromEnv(): WecomConfig {
-    const baseDir = path.join(process.cwd(), ".openintern3", "wecom");
+    const baseDir = path.join(process.cwd(), "plugins", "wecom");
     return {
       enabled: process.env.WECOM_ENABLED === "true",
       botId: process.env.WECOM_BOT_ID ?? "",

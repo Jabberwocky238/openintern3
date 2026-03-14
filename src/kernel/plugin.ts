@@ -2,6 +2,7 @@ import type { CapabilityProvider } from "./capability.js";
 import type { EventBus } from "./event-bus.js";
 import type { CapabilityInvokerServiceProvider } from "../service/capability-invoker.js";
 import type { CapabilityRegistryServiceProvider } from "../service/capability-registry.js";
+import type { Logger } from "./logger.js";
 
 export interface PluginOptions {
   namespaces: string[];
@@ -12,6 +13,7 @@ export interface PluginOptions {
 export interface PluginInject {
   capabilityInvoker: CapabilityInvokerServiceProvider;
   capabilityRegistry: CapabilityRegistryServiceProvider;
+  logger: Logger;
 }
 
 export abstract class Plugin {
@@ -52,10 +54,24 @@ export abstract class Plugin {
 
   public async init(): Promise<void> {}
 
+  protected logger(): Logger {
+    const logger = this.inject.logger;
+    if (!logger) {
+      throw new Error(`Logger is not available for plugin '${this.name}'.`);
+    }
+    return logger as Logger;
+  }
+
   // only for internal use by the Application to initialize the plugin
   public async _initPlugin(eventBus: EventBus, services: Partial<PluginInject>): Promise<void> {
     this.eventBus = eventBus;
     Object.assign(this.inject, services);
+    if (services.logger) {
+      this.inject.logger = services.logger.child({
+        pluginName: this.name,
+        pluginVersion: this.version,
+      });
+    }
     try {
       await this.init();
       this._initState = true;

@@ -4,7 +4,7 @@ import {
   type CapabilityDescriptor,
   type CapabilityResult,
 } from "@openintern/kernel/capability";
-import type { WecomEngine } from "./inner.js";
+import type { WecomEngine } from "./engine.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
