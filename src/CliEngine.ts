@@ -1,3 +1,5 @@
+import { appendFile, mkdir, readFile } from "node:fs/promises";
+import path from "node:path";
 import { inspect } from "node:util";
 
 import type { CapabilityDescriptor } from "./kernel/capability.js";
@@ -13,11 +15,37 @@ interface PluginHost {
 export class CliEngine {
   private mode: CliMode = "cliAgent";
   private readonly agentSessionId = "cli";
+  private readonly historyPath = path.join(process.cwd(), ".openintern3", "history");
+  private historyEntries: string[] = [];
+
+  public async initHistory(): Promise<void> {
+    await mkdir(path.dirname(this.historyPath), { recursive: true });
+
+    try {
+      const content = await readFile(this.historyPath, "utf8");
+      this.historyEntries = content
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+
+      this.historyEntries = [];
+    }
+  }
+
+  public getReadlineHistory(): string[] {
+    return [...this.historyEntries].reverse();
+  }
 
   public async execute(input: string, host: PluginHost): Promise<string | null> {
     if (input.length === 0) {
       return null;
     }
+
+    await this.appendHistory(input);
 
     if (input.startsWith("/")) {
       return this.executeCommand(input, host);
@@ -32,6 +60,18 @@ export class CliEngine {
 
   public getPrompt(): string {
     return this.mode === "cliAgent" ? "agent> " : "debug> ";
+  }
+
+  private async appendHistory(input: string): Promise<void> {
+    const trimmed = input.trim();
+
+    if (trimmed.length === 0) {
+      return;
+    }
+
+    await mkdir(path.dirname(this.historyPath), { recursive: true });
+    await appendFile(this.historyPath, `${trimmed}\n`, "utf8");
+    this.historyEntries.push(trimmed);
   }
 
   private async executeCommand(input: string, host: PluginHost): Promise<string | null> {
@@ -139,12 +179,25 @@ export class CliEngine {
     }
 
     let result: unknown;
+    const progressMessages: string[] = [];
 
     try {
       result = await Reflect.apply(
         callable as (...args: unknown[]) => unknown,
         agentPlugin,
-        [this.agentSessionId, input],
+        [
+          this.agentSessionId,
+          input,
+          undefined,
+          undefined,
+          async (message: string) => {
+            const trimmed = message.trim();
+
+            if (trimmed.length > 0) {
+              progressMessages.push(trimmed);
+            }
+          },
+        ],
       );
     } catch (error) {
       if (error instanceof Error) {
@@ -152,6 +205,10 @@ export class CliEngine {
       }
 
       return String(error);
+    }
+
+    if (progressMessages.length > 0) {
+      return progressMessages.join("\n\n");
     }
 
     const finalContent = this.extractAgentFinalContent(result);

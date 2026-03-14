@@ -32,6 +32,7 @@ const SUBAGENT_MANAGER_STATE_KEY = "subagentManager";
 
 export default class AgentPlugin extends Plugin implements AgentRunner {
   private provider?: AgentProvider;
+  private lastProgressMessageBySession = new Map<string, string>();
 
   constructor() {
     super({
@@ -122,6 +123,7 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
     input: string,
     model?: string,
     systemPrompt?: string,
+    onProgressMessage?: (message: string) => Promise<void>,
   ): Promise<AgentRunResult> {
     if (typeof sessionId !== "string" || sessionId.trim().length === 0) {
       throw new TypeError("sessionId must be a non-empty string.");
@@ -157,6 +159,7 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
       baseMessages,
       {
         sessionId: key,
+        onProgressMessage,
       },
     );
 
@@ -164,6 +167,7 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
     session.messages = execution.messages.concat(concurrentMessages);
     session.updatedAt = new Date();
     await sessions.save(session);
+    this.lastProgressMessageBySession.delete(key);
 
     return execution.result;
   }
@@ -239,6 +243,7 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
     session.messages = execution.messages.concat(concurrentMessages);
     session.updatedAt = new Date();
     await sessions.save(session);
+    this.lastProgressMessageBySession.delete(sessionId);
     return execution.result;
   }
 
@@ -247,6 +252,14 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
     if (!payload) {
       return;
     }
+
+    this.logger().info("agent received channel bus message", {
+      channel: payload.channel,
+      senderId: payload.senderId,
+      chatId: payload.chatId,
+      contentPreview: payload.content.slice(0, 120),
+      mediaCount: payload.media.length,
+    });
 
     if (!payload.chatId.trim()) {
       return;
@@ -260,15 +273,22 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
     const result = await this.runSession(
       `${route.sessionPrefix}:${payload.chatId}`,
       this.formatChannelInput(payload),
+      undefined,
+      undefined,
+      async (message) => {
+        await this.invokeCapability(route.replyCapabilityId, {
+          to: payload.chatId,
+          text: message,
+        });
+      },
     );
     if (!result.finalContent || !result.finalContent.trim()) {
-      return;
+      this.logger().info("agent produced empty channel reply", {
+        channel: payload.channel,
+        chatId: payload.chatId,
+        sessionId: `${route.sessionPrefix}:${payload.chatId}`,
+      });
     }
-
-    await this.invokeCapability(route.replyCapabilityId, {
-      to: payload.chatId,
-      text: result.finalContent,
-    });
   }
 
   private async executeToolCall(
@@ -279,8 +299,23 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
     const deniedReason = this.getCapabilityDenyReason(capabilityId, options?.isolation);
 
     if (deniedReason) {
+      this.logger().warn("agent tool call denied", {
+        capabilityId,
+        toolCallId: toolCall.id,
+        toolName: toolCall.name,
+        reason: deniedReason,
+        sessionId: options?.sessionId,
+      });
       return `Error: ${deniedReason}`;
     }
+
+    this.logger().info("agent invoking capability", {
+      capabilityId,
+      toolCallId: toolCall.id,
+      toolName: toolCall.name,
+      arguments: toolCall.arguments,
+      sessionId: options?.sessionId,
+    });
 
     const result = await this.invoker().invoke(
       capabilityId,
@@ -292,10 +327,26 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
     );
 
     if (!result.ok) {
+      this.logger().warn("agent capability invocation failed", {
+        capabilityId,
+        toolCallId: toolCall.id,
+        toolName: toolCall.name,
+        error: result.error ?? `Capability invocation failed: ${capabilityId}`,
+        sessionId: options?.sessionId,
+      });
       return `Error: ${result.error ?? `Capability invocation failed: ${capabilityId}`}`;
     }
 
-    return this.stringifyToolResult(result.value);
+    const stringified = this.stringifyToolResult(result.value);
+    this.logger().info("agent capability invocation completed", {
+      capabilityId,
+      toolCallId: toolCall.id,
+      toolName: toolCall.name,
+      sessionId: options?.sessionId,
+      resultPreview: stringified.slice(0, 240),
+    });
+
+    return stringified;
   }
 
   private async buildCapabilityTools(
@@ -382,6 +433,14 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
       });
 
       lastResult = result;
+      this.logger().info("agent provider returned result", {
+        iteration: iteration + 1,
+        sessionId: options?.sessionId,
+        finishReason: result.finishReason ?? "stop",
+        finalContentPreview: (result.finalContent ?? "").slice(0, 240),
+        toolCallCount: result.toolCalls.length,
+      });
+      await this.emitProgressMessage(options, result.finalContent ?? "");
 
       if (result.toolCalls.length === 0) {
         activeMessages.push({
@@ -396,6 +455,15 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
           messages: activeMessages,
         };
       }
+
+      this.logger().info("agent received tool calls", {
+        iteration: iteration + 1,
+        sessionId: options?.sessionId,
+        toolCalls: result.toolCalls.map((toolCall) => ({
+          id: toolCall.id,
+          name: toolCall.name,
+        })),
+      });
 
       activeMessages.push({
         role: "assistant",
@@ -448,6 +516,33 @@ export default class AgentPlugin extends Plugin implements AgentRunner {
         typeof message.role === "string" &&
         (typeof message.content === "string" || message.content === null),
     );
+  }
+
+  private async emitProgressMessage(
+    options: AgentExecutionOptions | undefined,
+    message: string,
+  ): Promise<void> {
+    if (typeof options?.onProgressMessage !== "function") {
+      return;
+    }
+
+    const trimmed = message.trim();
+
+    if (trimmed.length === 0) {
+      return;
+    }
+
+    if (options.sessionId) {
+      const lastMessage = this.lastProgressMessageBySession.get(options.sessionId);
+
+      if (lastMessage === trimmed) {
+        return;
+      }
+
+      this.lastProgressMessageBySession.set(options.sessionId, trimmed);
+    }
+
+    await options.onProgressMessage(trimmed);
   }
 
   private getSessionStore(): AgentSessionStore {

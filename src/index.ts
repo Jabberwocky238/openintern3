@@ -15,11 +15,11 @@ if (existsSync(".env.dev")) {
 }
 
 const application = new Application();
+await application.init();
 const pluginLoader = new PluginLoader();
 const pluginModulePaths = [
   new URL("../plugins/echo/src/index.ts", import.meta.url).href,
   new URL("../plugins/cron/src/index.ts", import.meta.url).href,
-  // new URL("../plugins/filesystem/src/index.ts", import.meta.url).href,
   new URL("../plugins/web-search/src/index.ts", import.meta.url).href,
   new URL("../plugins/agent/src/index.ts", import.meta.url).href,
   new URL("../plugins/terminals/src/index.ts", import.meta.url).href,
@@ -37,7 +37,11 @@ const terminal = createInterface({
   input: stdin,
   output: stdout,
   prompt: application.getPrompt(),
+  historySize: 1000,
 });
+
+(terminal as unknown as InterfaceWithHistory).history =
+  application.getCliReadlineHistory();
 
 terminal.prompt();
 
@@ -52,3 +56,6 @@ terminal.on("line", async (line) => {
   terminal.prompt();
 });
 
+interface InterfaceWithHistory {
+  history: string[];
+}

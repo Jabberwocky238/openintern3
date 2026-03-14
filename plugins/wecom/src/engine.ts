@@ -96,7 +96,8 @@ export class WecomEngine {
           this.log("debug", `sdk ${message}`);
         },
         info: (message: string) => {
-          this.log("info", `sdk ${message}`);
+          const level = this.sdkInfoLogLevel(message);
+          this.log(level, `sdk ${message}`);
         },
         warn: (message: string) => {
           this.lastError = message;
@@ -423,6 +424,19 @@ export class WecomEngine {
 
   private toWorkspaceRelativePath(filePath: string): string {
     return path.relative(process.cwd(), filePath).replace(/\\/g, "/");
+  }
+
+  private sdkInfoLogLevel(message: string): "debug" | "info" {
+    const normalized = message.toLowerCase();
+    if (
+      normalized.includes("heartbeat") ||
+      normalized.includes("protocol ping") ||
+      normalized.includes("sent pong")
+    ) {
+      return "debug";
+    }
+
+    return "info";
   }
 
   private isAllowedSender(senderId: string, chatType: "single" | "group", chatId: string): boolean {

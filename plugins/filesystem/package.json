@@ -1,7 +1,0 @@
-{
-  "name": "@openintern3/plugin-filesystem",
-  "version": "0.0.0",
-  "private": true,
-  "type": "module",
-  "main": "src/index.ts"
-}

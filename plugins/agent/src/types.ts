@@ -65,6 +65,7 @@ export interface AgentLoopExecution {
 export interface AgentExecutionOptions {
   sessionId?: string;
   isolation?: SubagentIsolationContext;
+  onProgressMessage?: (message: string) => Promise<void>;
 }
 
 export interface SubagentSpawnRequest {

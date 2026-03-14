@@ -54,7 +54,7 @@ export abstract class Plugin {
 
   public async init(): Promise<void> {}
 
-  protected logger(): Logger {
+  public logger(): Logger {
     const logger = this.inject.logger;
     if (!logger) {
       throw new Error(`Logger is not available for plugin '${this.name}'.`);

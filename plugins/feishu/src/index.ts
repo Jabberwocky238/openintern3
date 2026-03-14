@@ -65,6 +65,11 @@ export default class FeishuPlugin extends Plugin {
   }
 
   public async start(): Promise<void> {
+    if (this.status().started) {
+      this.logger().info("skip start because feishu is already started");
+      return;
+    }
+
     await this.inner().start();
   }
 

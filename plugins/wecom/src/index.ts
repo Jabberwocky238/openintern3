@@ -70,6 +70,11 @@ export default class WecomPlugin extends Plugin {
   }
 
   public async start(): Promise<void> {
+    if (this.status().started) {
+      this.logger().info("skip start because wecom is already started");
+      return;
+    }
+
     await this.inner().start();
   }
 

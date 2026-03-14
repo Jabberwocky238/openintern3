@@ -36,6 +36,14 @@ export class Application {
     return this.cliEngine.getPrompt();
   }
 
+  public async init(): Promise<void> {
+    await this.cliEngine.initHistory();
+  }
+
+  public getCliReadlineHistory(): string[] {
+    return this.cliEngine.getReadlineHistory();
+  }
+
   public getPlugin(name: string): Plugin | undefined {
     return this.plugins.find((plugin) => plugin.name === name);
   }

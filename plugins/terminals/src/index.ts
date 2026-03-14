@@ -4,7 +4,7 @@ import {
   type SpawnOptionsWithoutStdio,
 } from "node:child_process";
 import { createWriteStream, mkdirSync, writeFileSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, open, readFile } from "node:fs/promises";
 import path from "node:path";
 import { CapabilityProvider, Plugin } from "@openintern/kernel";
 import {
@@ -38,6 +38,12 @@ export type {
 } from "./types.js";
 export { TerminalCommandExecution } from "./execution.js";
 
+export const TerminalsRuntimeBaseDir = path.join(
+  process.cwd(),
+  ".openintern3",
+  "terminals",
+);
+
 export default class TerminalsPlugin extends Plugin {
   constructor() {
     super({
@@ -49,8 +55,11 @@ export default class TerminalsPlugin extends Plugin {
 
   public override async init(): Promise<void> {
     this.state.processes = new Map<number, ManagedTerminalProcess>();
-    this.state.outputBaseDir = path.join(process.cwd(), "terminals", "output");
+    this.state.outputBaseDir = path.join(TerminalsRuntimeBaseDir, "output");
     await mkdir(this.outputBaseDir(), { recursive: true });
+    this.log("info", "terminals plugin initialized", {
+      outputBaseDir: this.outputBaseDir(),
+    });
   }
 
   public override capabilities(): CapabilityProvider[] {
@@ -73,6 +82,12 @@ export default class TerminalsPlugin extends Plugin {
 
     const cwd = this.resolveCwd(options.cwd);
     const shell = this.resolveShell(options.shell);
+    this.log("info", "starting terminal process", {
+      command,
+      description: options.description?.trim() || command,
+      cwd,
+      shell: shell.command,
+    });
     const child = spawn(shell.command, shell.args(command), {
       cwd,
       env: {
@@ -91,6 +106,12 @@ export default class TerminalsPlugin extends Plugin {
 
     const processRecord = this.createManagedProcess(pid, command, cwd, child, options);
     this.getProcessState().set(pid, processRecord);
+    this.log("info", "terminal process started", {
+      pid,
+      command,
+      description: processRecord.description,
+      cwd,
+    });
 
     return {
       pid,
@@ -99,9 +120,13 @@ export default class TerminalsPlugin extends Plugin {
   }
 
   public list(): TerminalProcessSummary[] {
-    return [...this.getProcessState().values()]
+    const processes = [...this.getProcessState().values()]
       .map((processRecord) => this.toSummary(processRecord))
       .sort((left, right) => right.startedAt.localeCompare(left.startedAt));
+    this.log("debug", "listing terminal processes", {
+      count: processes.length,
+    });
+    return processes;
   }
 
   public async tail(
@@ -118,6 +143,12 @@ export default class TerminalsPlugin extends Plugin {
     }
 
     const processRecord = this.getProcessByPid(pid);
+    this.log("debug", "reading terminal tail", {
+      pid,
+      lines,
+      stream,
+      command: processRecord.command,
+    });
     return this.readTail(processRecord, lines, stream);
   }
 
@@ -126,6 +157,11 @@ export default class TerminalsPlugin extends Plugin {
     status: "killed";
   } {
     const processRecord = this.getProcessByPid(pid);
+    this.log("warn", "killing terminal process", {
+      pid,
+      command: processRecord.command,
+      status: processRecord.status,
+    });
 
     if (processRecord.status === "running") {
       processRecord.status = "killed";
@@ -139,6 +175,11 @@ export default class TerminalsPlugin extends Plugin {
   }
 
   public cmd(command: string, options: TerminalCommandOptions = {}): TerminalCommandExecution {
+    this.log("info", "executing terminal command", {
+      command,
+      description: options.description?.trim() || command,
+      cwd: options.cwd,
+    });
     const started = this.start(command, options);
     const processRecord = this.getProcessByPid(started.pid);
     const execution = new TerminalCommandExecution(
@@ -224,6 +265,12 @@ export default class TerminalsPlugin extends Plugin {
 
       const onError = (error: Error): void => {
         processRecord.status = processRecord.status === "killed" ? "killed" : "failed";
+        this.log("error", "terminal process failed", {
+          pid: processRecord.pid,
+          command: processRecord.command,
+          message: error.message,
+          stack: error.stack,
+        });
         cleanup();
         this.closeOutputStreams(stdoutStream, stderrStream, combinedStream).then(
           () => reject(error),
@@ -238,6 +285,14 @@ export default class TerminalsPlugin extends Plugin {
         if (processRecord.status !== "killed") {
           processRecord.status = exitCode === 0 ? "exited" : "failed";
         }
+
+        this.log("info", "terminal process closed", {
+          pid: processRecord.pid,
+          command: processRecord.command,
+          status: processRecord.status,
+          exitCode,
+          signal,
+        });
 
         cleanup();
         void this.closeOutputStreams(stdoutStream, stderrStream, combinedStream).then(() =>
@@ -384,10 +439,11 @@ export default class TerminalsPlugin extends Plugin {
     lines: number,
     stream: TerminalOutputStream,
   ): Promise<TerminalOutputLine[]> {
-    const content = await this.readOutputFile(
+    const content = await this.readTailContent(
       this.outputPathForStream(processRecord, stream),
+      lines,
     );
-    return this.toOutputLines(stream, content).slice(-lines);
+    return this.toOutputLines(stream, content);
   }
 
   private async readOutputFile(filePath: string): Promise<string> {
@@ -423,6 +479,69 @@ export default class TerminalsPlugin extends Plugin {
       }));
   }
 
+  private async readTailContent(filePath: string, lines: number): Promise<string> {
+    let handle;
+
+    try {
+      handle = await open(filePath, "r");
+    } catch {
+      return "";
+    }
+
+    try {
+      const stats = await handle.stat();
+
+      if (stats.size === 0) {
+        return "";
+      }
+
+      const chunkSize = 4096;
+      let position = stats.size;
+      let content = "";
+      let newlineCount = 0;
+
+      while (position > 0 && newlineCount <= lines) {
+        const readSize = Math.min(chunkSize, position);
+        position -= readSize;
+
+        const buffer = Buffer.alloc(readSize);
+        const { bytesRead } = await handle.read(buffer, 0, readSize, position);
+
+        if (bytesRead <= 0) {
+          break;
+        }
+
+        const chunk = buffer.toString("utf8", 0, bytesRead);
+        content = `${chunk}${content}`;
+        newlineCount = this.countNewlines(content);
+      }
+
+      const normalized = content.replace(/\r\n/g, "\n");
+      const endsWithNewline = normalized.endsWith("\n");
+      const parts = normalized.split("\n");
+
+      if (endsWithNewline && parts[parts.length - 1] === "") {
+        parts.pop();
+      }
+
+      return parts.slice(-lines).join("\n");
+    } finally {
+      await handle.close();
+    }
+  }
+
+  private countNewlines(content: string): number {
+    let count = 0;
+
+    for (const char of content) {
+      if (char === "\n") {
+        count += 1;
+      }
+    }
+
+    return count;
+  }
+
   private outputPathForStream(
     processRecord: ManagedTerminalProcess,
     stream: TerminalOutputStream,
@@ -436,6 +555,17 @@ export default class TerminalsPlugin extends Plugin {
     }
 
     return processRecord.combinedPath;
+  }
+
+  private log(level: "debug" | "info" | "warn" | "error", message: string, detail?: unknown): void {
+    const logger = this.logger();
+
+    if (detail === undefined) {
+      logger[level](message);
+      return;
+    }
+
+    logger[level](message, detail);
   }
 
 }
